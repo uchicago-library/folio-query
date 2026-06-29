@@ -185,5 +185,44 @@
 	    and do (nconc f-graph (rest (symbol-value (cadr key-out-val))))))
   f-graph)
 
+(defun add-node (node adj-list)
+  (if (assoc node adj-list :test #'equal)
+      adj-list
+      (cons (list node ()) adj-list)))
+
+(defun add-edge (from to adj-list)
+  (loop for ne-pair in adj-list
+	for node = (first ne-pair)
+	when (equal node from)
+	  do (push to (second ne-pair)))
+  adj-list)
+
 (defun json-to-adj-list (job)
-  (
+  (let ((acc ()))
+    (labels ((walk (parent jo)
+	       (cond
+		 ((hash-table-p jo)
+		  (maphash (lambda (key value)
+			     (setf acc (add-node key acc))
+			     (when parent
+			       (add-edge parent key acc))
+			     (walk key value))
+			   jo))
+		 ((stringp jo) nil)
+		 ((vectorp jo)
+		  (loop for el across jo
+			do (walk parent el))))))
+      (walk nil job))
+    acc))
+
+(defun uuid-p (str)
+  (and (stringp str)
+       (= (length str) 36)
+       (char= (char str 8) #\-)
+       (char= (char str 13) #\-)
+       (char= (char str 18) #\-)
+       (char= (char str 23) #\-)
+       (every (lambda (letter)
+                (or (digit-char-p letter 16)
+                    (char= letter #\-)))
+              str)))

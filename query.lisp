@@ -289,3 +289,16 @@
 		 when (ends-with "Id" (car item))
 		   do (setf (car item) (concatenate 'string (after-char #\. (car item)) (string #\*)))))
   adj-list)
+
+(defparameter *json-test-hash* (make-hash-table))
+(setf (gethash "holdingsRecordId*" *json-test-hash*) '("holdingsRecordId" *test-json-3*))
+
+(defun json-graph-merge (f-graph)
+  (let ((key-out *json-test-hash*))
+    (loop for ne-pair in f-graph
+	  for node = (first ne-pair)
+	  for key-out-val = (gethash node key-out)
+	  when (not (null key-out-val))
+	    do (setf (cadr ne-pair) (adj-of (symbol-value (cadr key-out-val)) (car key-out-val)))
+	    and do (nconc f-graph (rest (symbol-value (cadr key-out-val))))))
+  f-graph)

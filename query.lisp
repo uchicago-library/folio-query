@@ -69,7 +69,7 @@
 
 (defun get-shortest-path (adj-list start dest)
   (let ((visited ())
-	(parent (make-hash-table))
+	(parent (make-hash-table :test #'equal))
 	(queue (make-queue)))
     (enqueue start queue)
     (push start visited)
@@ -77,7 +77,7 @@
 	  for curr = (dequeue queue)
 	  for edges = (adj-of adj-list curr)
 	  do (loop for next in edges
-		   if (not (member next visited))
+		   if (not (member next visited :test #'equal))
 		     do (push next visited)
 		     and do (enqueue next queue)
 		     and do (setf (gethash next parent) curr)))
@@ -226,3 +226,66 @@
                 (or (digit-char-p letter 16)
                     (char= letter #\-)))
               str)))
+
+(defstruct (stack (:constructor make-stack ()))
+  (top nil :type list))
+
+(defun push-stack (item stack)
+  (push item (stack-top stack)))
+
+(defun pop-stack (stack)
+  (pop (stack-top stack)))
+
+(defun peek-stack (stack)
+  (car (stack-top stack)))
+
+(defun stack-path (stack)
+  (format nil "~{~A~^.~}" (reverse (stack-top stack))))
+
+(defun stack-path-tag (stack)
+  (let ((top (stack-top stack)))
+    (format nil "~A.~A" (cadr top) (car top))))
+
+(defun json-to-adj-list-2 (job)
+  (let ((acc ())
+        (stack (make-stack)))
+    (labels ((walk (parent jo)
+               (cond
+                 ((hash-table-p jo)
+                  (maphash (lambda (key value)
+                             (push-stack key stack)
+                             (let ((node-name (if (assoc key acc :test #'equal)
+                                                  (stack-path-tag stack)
+                                                  key)))
+                               (setf acc (add-node node-name acc))
+                               (when parent
+                                 (add-edge parent node-name acc))
+                               (walk node-name value))
+                             (pop-stack stack))
+                           jo))
+                 ((stringp jo) nil)
+                 ((vectorp jo)
+                  (loop for el across jo
+                        do (walk parent el))))))
+      (walk nil job))
+    acc))
+
+(defun ends-with (suffix str)
+  (and (>= (length str) (length suffix))
+       (string= str suffix :start1 (- (length str) (length suffix)))))
+
+(defun after-char (char str)
+  (let ((pos (position char str)))
+    (if pos
+	(subseq str (1+ pos))
+	str)))
+
+;; hacky workaround just used for testing
+(defun prune-tag (adj-list)
+  (loop for ne-pair in adj-list
+	when (ends-with "Id" (first ne-pair))
+	  do (setf (first ne-pair) (concatenate 'string (after-char #\. (first ne-pair)) (string #\*)))
+	do (loop for item on (second ne-pair)
+		 when (ends-with "Id" (car item))
+		   do (setf (car item) (concatenate 'string (after-char #\. (car item)) (string #\*)))))
+  adj-list)

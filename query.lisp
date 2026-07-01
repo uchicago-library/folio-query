@@ -246,9 +246,12 @@
   (let ((top (stack-top stack)))
     (format nil "~A.~A" (cadr top) (car top))))
 
-(defun json-to-adj-list-2 (job)
-  (let ((acc ())
+;; wraps in a root-node that represents api endpoint
+;; need to mark in a way that's recoverable when giving path
+(defun json-to-adj-list-2 (job root-name)
+  (let ((acc (list (list root-name ())))
         (stack (make-stack)))
+    (push-stack root-name stack)
     (labels ((walk (parent jo)
                (cond
                  ((hash-table-p jo)
@@ -267,7 +270,7 @@
                  ((vectorp jo)
                   (loop for el across jo
                         do (walk parent el))))))
-      (walk nil job))
+      (walk root-name job))
     acc))
 
 (defun ends-with (suffix str)
@@ -275,7 +278,7 @@
        (string= str suffix :start1 (- (length str) (length suffix)))))
 
 (defun after-char (char str)
-  (let ((pos (position char str)))
+  (let ((pos (position char str :from-end t)))
     (if pos
 	(subseq str (1+ pos))
 	str)))
@@ -290,8 +293,9 @@
 		   do (setf (car item) (concatenate 'string (after-char #\. (car item)) (string #\*)))))
   adj-list)
 
-(defparameter *json-test-hash* (make-hash-table))
-(setf (gethash "holdingsRecordId*" *json-test-hash*) '("holdingsRecordId" *test-json-3*))
+(defparameter *json-test-hash* (make-hash-table :test #'equal))
+(setf (gethash "holdingsRecordId*" *json-test-hash*) '("holdings-endpoint" *test-json-3*))
+(setf (gethash "instanceId*" *json-test-hash*) '("instances-endpoint" *test-json-1*))
 
 (defun json-graph-merge (f-graph)
   (let ((key-out *json-test-hash*))
@@ -299,6 +303,86 @@
 	  for node = (first ne-pair)
 	  for key-out-val = (gethash node key-out)
 	  when (not (null key-out-val))
-	    do (setf (cadr ne-pair) (adj-of (symbol-value (cadr key-out-val)) (car key-out-val)))
+	    do (setf (cadr ne-pair) (list (car key-out-val)))
 	    and do (nconc f-graph (rest (symbol-value (cadr key-out-val))))))
   f-graph)
+
+(defun prepend-endpoint (base-name root-name)
+  (format nil "~A.~A" root-name base-name))
+
+;; prepends endpoint as well
+(defun json-to-adj-list-3 (job root-name)
+  (let ((acc (list (list root-name ())))
+        (stack (make-stack)))
+    (push-stack root-name stack)
+    (labels ((walk (parent jo)
+               (cond
+                 ((hash-table-p jo)
+                  (maphash (lambda (key value)
+                             (push-stack key stack)
+                             (let ((node-name (if (assoc (prepend-endpoint key root-name) acc :test #'equal)
+                                                  (prepend-endpoint (stack-path-tag stack) root-name)
+                                                  (prepend-endpoint key root-name))))
+                               (setf acc (add-node node-name acc))
+                               (when parent
+                                 (add-edge parent node-name acc))
+                               (walk node-name value))
+                             (pop-stack stack))
+                           jo))
+                 ((stringp jo) nil)
+                 ((vectorp jo)
+                  (loop for el across jo
+                        do (walk parent el))))))
+      (walk root-name job))
+    acc))
+
+(defun prune-all-tags (adj-list)
+  (loop for ne-pair in adj-list
+	when (find #\. (first ne-pair))
+	  do (setf (first ne-pair) (after-char #\. (first ne-pair)))
+	do (loop for item on (second ne-pair)
+		 when (find #\. (car item))
+		   do (setf (car item) (after-char #\. (car item)))))
+  adj-list)
+
+(defun make-hash-many (&rest pairs)
+  (let ((ht (make-hash-table :test #'equal)))
+    (loop for (key val) on pairs by #'cddr
+	  do (setf (gethash key ht) val))
+    ht))
+
+(defun make-set-many (&rest vals)
+  (let ((ht (make-hash-table :test #'equal)))
+    (loop for val in vals
+	  do (setf (gethash val ht) t))
+    ht))
+
+;; Should end up being the real function for schema parsing
+(defun json-schema-to-adj-list (job root-name)
+  (let ((acc (list (list root-name ())))
+        (stack (make-stack)))
+    (push-stack root-name stack)
+    (labels ((walk (parent jo in-properties)
+               (when (hash-table-p jo)
+                 (if in-properties
+                     (maphash (lambda (key value)
+                                (push-stack key stack)
+                                (let ((node-name (if (assoc (prepend-endpoint key root-name) acc :test #'equal)
+                                                     (prepend-endpoint (stack-path-tag stack) root-name)
+                                                     (prepend-endpoint key root-name))))
+                                  (setf acc (add-node node-name acc))
+                                  (when parent
+                                    (add-edge parent node-name acc))
+                                  (walk node-name value nil))
+                                (pop-stack stack))
+                              jo)
+                     (maphash (lambda (key value)
+                                (cond
+                                  ((equal key "properties")
+                                   (walk parent value t))
+                                  ((and (equal key "items") (hash-table-p value))
+                                   (walk parent value nil))
+                                  (t nil)))
+                              jo)))))
+      (walk root-name job nil))
+    acc))

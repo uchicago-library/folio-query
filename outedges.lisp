@@ -19,3 +19,12 @@
 			do (walk el))))))
       (walk job))
     acc))
+
+(defun make-hash-edges (pairs)
+  (let ((ht (make-hash-table :test #'equal)))
+    (loop for pair in pairs
+	  for source = (first pair)
+	  for dest = (second pair)
+	  do (setf (gethash source ht) dest))
+    ht))
+

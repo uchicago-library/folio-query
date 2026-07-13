@@ -1,1 +1,3 @@
 Array of holdingsRecordId
+Write hash to binary during compile-time
+Shove credentials into binary at compile-time

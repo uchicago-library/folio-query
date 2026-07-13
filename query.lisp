@@ -1,6 +1,7 @@
 (load #P"~/quicklisp/setup.lisp")
 (ql:quickload '#:com.inuoe.jzon)
 (sb-ext:add-package-local-nickname '#:jzon '#:com.inuoe.jzon)
+(load #P"outedges.lisp")
 
 (defun my-echo ()
 (loop
@@ -386,3 +387,31 @@
                               jo)))))
       (walk root-name job nil))
     acc))
+
+(defun build-endpoint-graph (schema-path base-dir schema-to-endpoint-hash)
+  (let ((endpoint (gethash schema-path schema-to-endpoint-hash))
+        (schema (jzon:parse (pathname (merge-pathnames schema-path base-dir)))))
+    (when endpoint
+      (json-schema-to-adj-list schema endpoint))))
+
+(defun build-all-graphs (base-dir)
+  (let* ((raml-pairs (parse-all-raml base-dir))
+         (rev (reverse-mapping-hash raml-pairs)))
+    (loop for (endpoint schema) in raml-pairs
+          for graph = (build-endpoint-graph schema base-dir rev)
+          when graph
+            collect graph)))
+
+(defparameter *all-graphs* (make-hash-table :test #'equal))
+
+(loop for graph in (build-all-graphs "mod-inventory-storage/ramls/")
+      for root = (caar (last graph))
+      do (setf (gethash root *all-graphs*) graph))
+
+(defun print-hash (ht)
+  (maphash (lambda (key value)
+	     (format t "Key: ~A, Val: ~A~%" key value))
+	   ht))
+
+(defun merge-from-start-endpoint (start-endpoint)
+  

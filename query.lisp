@@ -1,7 +1,8 @@
-(load #P"~/quicklisp/setup.lisp")
-(ql:quickload '#:com.inuoe.jzon)
-(sb-ext:add-package-local-nickname '#:jzon '#:com.inuoe.jzon)
-(load #P"outedges.lisp")
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (load #P"~/quicklisp/setup.lisp")
+  (ql:quickload '#:com.inuoe.jzon)
+  (sb-ext:add-package-local-nickname '#:jzon '#:com.inuoe.jzon)
+  (load #P"outedges.lisp"))
 
 (defun my-echo ()
 (loop
@@ -408,10 +409,56 @@
       for root = (caar (last graph))
       do (setf (gethash root *all-graphs*) graph))
 
+;; currently broken. Repeated id names overwrite
+(defparameter *id-to-endpoint-map* (make-hash-table :test #'equal))
+
+;; make the path a global param
+(loop for pair in (parse-all-endpoints "mod-inventory-storage/ramls/")
+      for id = (first pair)
+      for endpoint = (second pair)
+      do (setf (gethash id *id-to-endpoint-map*) endpoint))
+
 (defun print-hash (ht)
   (maphash (lambda (key value)
 	     (format t "Key: ~A, Val: ~A~%" key value))
 	   ht))
 
-(defun merge-from-start-endpoint (start-endpoint)
+(defun selective-merge (id graph)
+  (let* ((node (assoc id graph :test #'equal))
+         (target-graph (copy-tree (gethash (gethash (string-right-trim "*" id) *id-to-endpoint-map*) *all-graphs*)))
+         (target-root (caar (last target-graph))))
+    (when (and node target-graph)
+      (setf (cadr node) (list target-root))
+      (nconc graph target-graph))
+    graph))
+
+(defun merge-from-start-endpoint (start-endpoint target)
+  (let ((visited ())
+	(queue (make-queue))
+	(start-graph (prune-tag (copy-tree (gethash start-endpoint *all-graphs*))))
+	(parent (make-hash-table :test #'equal)))
+    (enqueue start-endpoint queue)
+    (push start-endpoint visited)
+    (loop while (queue-head queue)
+	  for curr = (dequeue queue)
+	  for edges = (adj-of start-graph curr)
+	  do (when (string-equal curr target)
+	       (format t "MATCH: ~A~%" curr))
+	  do (cond ((string-equal curr target)
+		    (return-from merge-from-start-endpoint (backtrace-path parent start-endpoint target)))
+		   ((find #\* curr)
+		    (format t "Curr: ~A~%" curr)
+		    ;; might be tossing away an intermediate representation I want
+		    (setf start-graph (selective-merge curr start-graph))
+		    (setf edges (adj-of start-graph curr))
+		    (format t "Edges: ~A~%" edges))
+		   (t nil))
+	  do (loop for next in edges
+		     unless (member next visited :test #'equal)
+		       do (push next visited)
+		       and do (enqueue next queue)
+		       and do (setf (gethash next parent) curr)))
+    visited))
+	     
+	    
   

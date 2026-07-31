@@ -3,3 +3,8 @@ Write hash to binary during compile-time
 Shove credentials into binary at compile-time
 Use grep with ffi so you don't have to hard code things.
 Add query edges via cli
+Default config file
+If config at build time, crunch in the login credentials
+Config secrecy
+    Maybe create config file at first compilation?
+Input username/login at compilation and build config?

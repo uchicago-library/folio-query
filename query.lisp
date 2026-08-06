@@ -4,6 +4,8 @@
   (sb-ext:add-package-local-nickname '#:jzon '#:com.inuoe.jzon)
   (load #P"outedges.lisp"))
 
+;; bind read-eval to nil with a let around reads
+
 ;; Simple test function for I/O. Liable to be deleted
 (defun my-echo ()
 (loop
@@ -444,10 +446,17 @@
 ;; A global variable to hold all graphs in a hash table
 (defparameter *all-graphs* (make-hash-table :test #'equal))
 
+(defparameter *field-disambiguation* (make-hash-table :test #'equal))
+
 ;; Build all graphs at runtime and hash them into *all-graphs*
 (loop for graph in (build-all-graphs *schema-and-raml-path*)
       for root = (caar (last graph))
-      do (setf (gethash root *all-graphs*) graph))
+      do (setf (gethash root *all-graphs*) graph)
+      do (loop for (tagged-field) in graph
+	       for field = (when (find #\. tagged-field)
+			     (after-char #\. tagged-field))
+	       when field
+		 do (push tagged-field (gethash field *field-disambiguation*))))
 
 ;; override: holdingsRecordView.json 
 (setf (gethash "/holdings-storage/holdings" *all-graphs*)
@@ -510,7 +519,7 @@
 		       do (push next visited)
 		       and do (enqueue next queue)
 		       and do (setf (gethash next parent) curr)))
-    visited))
+    nil))
 
 ;; Simple function that checks if the provided str is an id. Separated so that it can be easily modified if I change how ids are labeled.
 (defun is-id (str)
@@ -519,6 +528,8 @@
 ;; Global var that tracks the base path for curls, before specific endpoints
 (defparameter *base-folio-path* "https://uchicago-test-okapi.folio.indexdata.com")
 
+(defparameter *base-curl* "curl -w '\n' -H \"Accept: application/json\" -H \"Content-Type: application/json\" -H \"X-Okapi-Tenant: uchicago\" -H \"X-Okapi-Token: ~A\" \"~A\"")
+
 ;; Takes a path of form (id, endpoint, id, endpoint...) and prints it to stdout in curlable format
 (defun print-curls (path)
   (loop for curr in path
@@ -526,9 +537,53 @@
 	when (and prev (is-id prev))
 	  do (format t "~A~A/{~A}~%" *base-folio-path* curr (string-right-trim "*" prev))))
 
+;; Takes a path of form (id, endpoint, id, endpoint...) and prints it to stdout in curlable format
+(defun format-endpoint-curls (path)
+  (loop for curr in path
+	and prev = nil then curr
+	when (and prev (is-id prev))
+	  collect (format nil "~A~A/{~A}" *base-folio-path* curr (string-right-trim "*" prev))))
+
+(defun format-full-curls (path)
+  (let ((all-curls (format-endpoint-curls path)))
+    (loop for dest in all-curls
+	  do (format t *base-curl* "" dest)
+	  do (format t "~%~%"))))
+
 ;; Pathfinds from an id to the target and prints the curls to stdout
-(defun pathfind-id (start-id target)
-  (print-curls (cons (format nil "~A~C" start-id #\*) (merge-from-start-endpoint (gethash start-id *id-to-endpoint-map*) target))))
+(defun pathfind-id (start-id target &key full)
+    (let ((path (cons (format nil "~A*" start-id)
+                    (merge-from-start-endpoint (gethash start-id *id-to-endpoint-map*) target))))
+    (if full
+        (format-full-curls path)
+        (print-curls path))))
+
+(defun disambiguate-target (field candidates)
+  (let ((chosen nil))
+    (block pick
+      (labels ((bind-restarts (remaining)
+                 (if (null remaining)
+                     (error "Ambiguous target field \"~A\":~{~%  ~A~}" field candidates)
+                     (let ((candidate (car remaining)))
+                       (restart-bind
+                           ((use-target
+                             (lambda ()
+                               (setf chosen candidate)
+                               (return-from pick))
+                             :report-function (lambda (s) (format s "Use ~A" candidate))))
+                         (bind-restarts (cdr remaining)))))))
+        (bind-restarts candidates)))
+    chosen))
+
+(defun pathfind-field (start-id target-field &key full)
+  (let ((hom-fields (gethash target-field *field-disambiguation*)))
+    (cond
+      ((null hom-fields)
+       (format t "No field \"~A\" found in any endpoint~%" target-field))
+      ((= (length hom-fields) 1)
+       (pathfind-id start-id (first hom-fields) :full full))
+      (t
+       (pathfind-id start-id (disambiguate-target target-field hom-fields) :full full)))))
 
 (defparameter *x-okapi-token* nil)
 (defparameter *config-file* "config.txt")
@@ -564,8 +619,6 @@
     (return-from print-login-curl nil))
   (format t *login-curl-base* *okapi-username* *okapi-password*))
 
-
-
 ;; do curl
 ;; print shell command to do curls
 ;; print path
@@ -573,3 +626,21 @@
 ;; debugging
 ;; statusId
 ;; make sure you don't intentionally put in security vulnerabilities
+;; func param that prints that sequence (takes dexador as opt parameter)
+;; Sting literals as first thing in body (whoops)
+;; documentation generators
+;; staple generator (generates documentation automatically)
+;; emacs macro to convert comments to docstrings
+;; use restarts for disambiguation of target
+;; let-over-lambda safety
+;; nuke provided info if it has too many repeated characters
+;; Start building CLI (tentative)
+;; Need flags and args
+;; Crunches (look for config if it doesn't find the crunch, error if no config)
+;; Makefile
+;; Makerules (automate repo pulling) 
+
+;; add func that trims {} and replaces it with ~A
+;; dexador rather than uiop
+;; user-friendly graphviz dump
+
